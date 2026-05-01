@@ -17,6 +17,7 @@ import {
   distributeToSessions,
   generateRoundRobin,
   teamColor,
+  teamLetter,
   teamName,
   teamTextColor,
 } from "./lib/teamLogic";
@@ -24,31 +25,129 @@ import { loadMembers, newMemberId, saveMembers } from "./lib/storage";
 
 type Phase = "setup" | "reveal" | "matches";
 
+// ---------- 効果音ユーティリティ ----------
+
+function getAudioCtx(): AudioContext | null {
+  try {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx();
+    if (ctx.state === "suspended") ctx.resume();
+    return ctx;
+  } catch { return null; }
+}
+
+function playClick() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = 700;
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  gain.gain.setValueAtTime(0.18, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + 0.12);
+}
+
+function playRevealPop() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(300, ctx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(700, ctx.currentTime + 0.08);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  gain.gain.setValueAtTime(0.35, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+  osc.start(ctx.currentTime);
+  osc.stop(ctx.currentTime + 0.22);
+}
+
+function playFanfare(ctx: AudioContext) {
+  [[523, 0], [659, 0.09], [784, 0.18], [1047, 0.27]].forEach(([freq, delay]) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    osc.connect(g);
+    g.connect(ctx.destination);
+    const st = ctx.currentTime + delay;
+    g.gain.setValueAtTime(0.32, st);
+    g.gain.exponentialRampToValueAtTime(0.001, st + 0.38);
+    osc.start(st);
+    osc.stop(st + 0.38);
+  });
+}
+
+function playDrumRoll(onComplete: () => void) {
+  const ctx = getAudioCtx();
+  if (!ctx) { setTimeout(onComplete, 100); return; }
+
+  const duration = 2.6;
+  let t = ctx.currentTime;
+  let interval = 0.18;
+  const endTime = t + duration;
+
+  while (t < endTime) {
+    const bufSize = Math.floor(ctx.sampleRate * 0.07);
+    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
+
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 1800;
+    filter.Q.value = 0.6;
+
+    const g = ctx.createGain();
+    const progress = 1 - (endTime - t) / duration;
+    g.gain.setValueAtTime(0.18 + progress * 0.28, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(ctx.destination);
+    src.start(t);
+    src.stop(t + 0.07);
+
+    t += interval;
+    interval = Math.max(0.032, interval * 0.89);
+  }
+
+  // ドラムロール後にファンファーレ
+  setTimeout(() => {
+    const ctx2 = getAudioCtx();
+    if (ctx2) playFanfare(ctx2);
+    setTimeout(onComplete, 600);
+  }, duration * 1000);
+}
+
+// ---------- メインコンポーネント ----------
+
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("setup");
 
-  // メンバー帳
   const [members, setMembers] = useState<Member[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // 設定
   const [format, setFormat] = useState<Format>("triples");
   const [customNumTeams, setCustomNumTeams] = useState(3);
   const [courtCount, setCourtCount] = useState<CourtCount>(2);
   const [refereeMode, setRefereeMode] = useState<boolean>(true);
 
-  // 手動チーム固定
   const [manualFixed, setManualFixed] = useState<Map<string, number>>(new Map());
 
-  // 振り分け結果
   const [assignment, setAssignment] = useState<TeamAssignment>(new Map());
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
-  const [lastReveal, setLastReveal] = useState<{
-    memberId: string;
-    teamNumber: number;
-  } | null>(null);
+  const [lastReveal, setLastReveal] = useState<{ memberId: string; teamNumber: number } | null>(null);
 
-  // localStorage
   useEffect(() => { setMembers(loadMembers()); }, []);
   useEffect(() => { saveMembers(members); }, [members]);
 
@@ -136,6 +235,7 @@ export default function Home() {
 
   function startReveal() {
     if (numTeams < 2) return;
+    playClick();
     setAssignment(buildAssignment());
     setRevealedIds(new Set());
     setLastReveal(null);
@@ -145,6 +245,7 @@ export default function Home() {
   function handleReveal(memberId: string) {
     const t = memberTeam.get(memberId);
     if (t === undefined || revealedIds.has(memberId)) return;
+    playRevealPop();
     setRevealedIds((p) => new Set(p).add(memberId));
     setLastReveal({ memberId, teamNumber: t });
   }
@@ -157,13 +258,14 @@ export default function Home() {
   function dismissReveal() { setLastReveal(null); }
 
   function reshuffleAndReveal() {
+    playClick();
     setAssignment(buildAssignment());
     setRevealedIds(new Set());
     setLastReveal(null);
   }
 
-  function gotoMatches() { setPhase("matches"); }
-  function backToSetup() { setPhase("setup"); }
+  function gotoMatches() { playClick(); setPhase("matches"); }
+  function backToSetup() { playClick(); setPhase("setup"); }
 
   // ---------- 描画 ----------
   if (phase === "setup") {
@@ -267,6 +369,12 @@ function SetupScreen(props: {
     onSetManualTeam, onClearManual, onStart,
   } = props;
 
+  // あいうえお順にソート
+  const sortedMembers = useMemo(
+    () => [...members].sort((a, b) => a.name.localeCompare(b.name, "ja")),
+    [members],
+  );
+
   const numParticipants = selectedIds.size;
   const numTeams = teamSizes.length;
   const baseSize = format !== "teamcount" ? FORMAT_BASE_SIZE[format] : null;
@@ -285,7 +393,7 @@ function SetupScreen(props: {
           {(["triples", "doubles", "teamcount"] as Format[]).map((f) => (
             <button
               key={f}
-              onClick={() => onSetFormat(f)}
+              onClick={() => { playClick(); onSetFormat(f); }}
               className={`py-3 rounded-xl border-2 text-sm font-semibold transition ${
                 format === f
                   ? "border-sky-500 bg-sky-50 text-sky-700"
@@ -307,12 +415,12 @@ function SetupScreen(props: {
             <span className="text-sm font-medium text-slate-700">チーム数</span>
             <div className="flex items-center gap-4">
               <button
-                onClick={() => onSetCustomNumTeams(Math.max(2, customNumTeams - 1))}
+                onClick={() => { playClick(); onSetCustomNumTeams(Math.max(2, customNumTeams - 1)); }}
                 className="w-9 h-9 rounded-full bg-white border-2 border-slate-200 text-xl font-bold text-slate-600 active:bg-slate-100"
               >−</button>
               <span className="text-3xl font-black tabular-nums w-8 text-center">{customNumTeams}</span>
               <button
-                onClick={() => onSetCustomNumTeams(Math.min(20, customNumTeams + 1))}
+                onClick={() => { playClick(); onSetCustomNumTeams(Math.min(20, customNumTeams + 1)); }}
                 className="w-9 h-9 rounded-full bg-white border-2 border-slate-200 text-xl font-bold text-slate-600 active:bg-slate-100"
               >＋</button>
             </div>
@@ -326,7 +434,7 @@ function SetupScreen(props: {
           {([1, 2, 3] as CourtCount[]).map((c) => (
             <button
               key={c}
-              onClick={() => onSetCourtCount(c)}
+              onClick={() => { playClick(); onSetCourtCount(c); }}
               className={`py-3 rounded-xl border-2 text-sm font-semibold transition ${
                 courtCount === c
                   ? "border-sky-500 bg-sky-50 text-sky-700"
@@ -335,7 +443,9 @@ function SetupScreen(props: {
             >{c} コート</button>
           ))}
         </div>
-        <p className="mt-2 text-xs text-center text-slate-500">{COURT_NAMES[courtCount].join(" / ")}</p>
+        {courtCount > 1 && (
+          <p className="mt-2 text-xs text-center text-slate-500">{COURT_NAMES[courtCount].join(" / ")}</p>
+        )}
       </Section>
 
       {/* ③ 審判 */}
@@ -344,7 +454,7 @@ function SetupScreen(props: {
           {[true, false].map((v) => (
             <button
               key={String(v)}
-              onClick={() => onSetReferee(v)}
+              onClick={() => { playClick(); onSetReferee(v); }}
               className={`py-3 rounded-xl border-2 text-sm font-semibold transition ${
                 refereeMode === v
                   ? "border-sky-500 bg-sky-50 text-sky-700"
@@ -366,7 +476,7 @@ function SetupScreen(props: {
         defaultOpen={members.length === 0}
       >
         <MemberRegistry
-          members={members}
+          members={sortedMembers}
           onAdd={onAddMember}
           onBulkAdd={onBulkAdd}
           onDelete={onDeleteMember}
@@ -392,16 +502,16 @@ function SetupScreen(props: {
         ) : (
           <>
             <div className="flex gap-2 mb-2">
-              <button onClick={onSelectAll} className="flex-1 py-2 rounded-lg bg-slate-100 text-xs font-medium text-slate-600 active:bg-slate-200">全員選択</button>
-              <button onClick={onDeselectAll} className="flex-1 py-2 rounded-lg bg-slate-100 text-xs font-medium text-slate-600 active:bg-slate-200">全解除</button>
+              <button onClick={() => { playClick(); onSelectAll(); }} className="flex-1 py-2 rounded-lg bg-slate-100 text-xs font-medium text-slate-600 active:bg-slate-200">全員選択</button>
+              <button onClick={() => { playClick(); onDeselectAll(); }} className="flex-1 py-2 rounded-lg bg-slate-100 text-xs font-medium text-slate-600 active:bg-slate-200">全解除</button>
             </div>
             <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto">
-              {members.map((m) => {
+              {sortedMembers.map((m) => {
                 const checked = selectedIds.has(m.id);
                 return (
                   <button
                     key={m.id}
-                    onClick={() => onToggleSelect(m.id)}
+                    onClick={() => { playClick(); onToggleSelect(m.id); }}
                     className={`flex items-center gap-2 py-2.5 px-3 rounded-xl border-2 text-left transition ${
                       checked ? "border-sky-500 bg-sky-50" : "border-slate-200 bg-white"
                     }`}
@@ -438,7 +548,7 @@ function SetupScreen(props: {
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {teamSizes.map((sz, i) => (
                   <span key={i} className={`text-xs font-bold text-white px-2 py-0.5 rounded ${teamColor(i + 1)}`}>
-                    {i + 1}: {sz}人
+                    {teamLetter(i + 1)}: {sz}人
                   </span>
                 ))}
               </div>
@@ -459,14 +569,14 @@ function SetupScreen(props: {
           title="⑥ 手動でチーム固定（任意）"
           right={
             manualFixed.size > 0
-              ? <button onClick={onClearManual} className="text-xs text-sky-600 underline">全解除({manualFixed.size})</button>
+              ? <button onClick={() => { playClick(); onClearManual(); }} className="text-xs text-sky-600 underline">全解除({manualFixed.size})</button>
               : <span className="text-xs text-slate-400">未指定はランダム</span>
           }
           collapsible
           defaultOpen={false}
         >
           <ManualFixList
-            members={members.filter((m) => selectedIds.has(m.id))}
+            members={sortedMembers.filter((m) => selectedIds.has(m.id))}
             numTeams={numTeams}
             manualFixed={manualFixed}
             onSet={onSetManualTeam}
@@ -543,11 +653,11 @@ function MemberRegistry({ members, onAdd, onBulkAdd, onDelete, onRename, onSetGr
           onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) { onAdd(name); setName(""); } }}
           placeholder="名前を入力"
           className="flex-1 px-3 py-2 rounded-lg border-2 border-slate-200 focus:border-sky-500 outline-none text-sm" />
-        <button onClick={() => { if (name.trim()) { onAdd(name); setName(""); } }} disabled={!name.trim()}
+        <button onClick={() => { if (name.trim()) { playClick(); onAdd(name); setName(""); } }} disabled={!name.trim()}
           className="px-4 py-2 rounded-lg bg-sky-600 text-white text-sm font-semibold disabled:bg-slate-300">追加</button>
       </div>
       <div className="mb-3">
-        <button onClick={() => setBulkOpen((b) => !b)} className="text-xs text-sky-600 underline">
+        <button onClick={() => { playClick(); setBulkOpen((b) => !b); }} className="text-xs text-sky-600 underline">
           {bulkOpen ? "閉じる" : "▸ まとめて追加（1行1名）"}
         </button>
         {bulkOpen && (
@@ -555,7 +665,7 @@ function MemberRegistry({ members, onAdd, onBulkAdd, onDelete, onRename, onSetGr
             <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)}
               rows={4} placeholder={"田中\n佐藤\n山田"}
               className="w-full px-3 py-2 rounded-lg border-2 border-slate-200 outline-none text-sm font-mono" />
-            <button onClick={() => { onBulkAdd(bulkText); setBulkText(""); setBulkOpen(false); }}
+            <button onClick={() => { playClick(); onBulkAdd(bulkText); setBulkText(""); setBulkOpen(false); }}
               className="mt-1.5 w-full py-2 rounded-lg bg-sky-600 text-white text-sm font-semibold">一括追加</button>
           </div>
         )}
@@ -592,7 +702,7 @@ function MemberRow({ member, onDelete, onRename, onSetGrade }: {
             if (e.key === "Escape") { setDraft(member.name); setEditing(false); }
           }}
           className="flex-1 px-2 py-1 rounded-lg border border-sky-300 outline-none text-sm bg-white" />
-        <button onClick={() => { onRename(draft); setEditing(false); }} className="text-sm font-bold text-sky-700 px-2">保存</button>
+        <button onClick={() => { playClick(); onRename(draft); setEditing(false); }} className="text-sm font-bold text-sky-700 px-2">保存</button>
         <button onClick={() => { setDraft(member.name); setEditing(false); }} className="text-sm text-slate-400 px-1">×</button>
       </div>
     );
@@ -600,7 +710,7 @@ function MemberRow({ member, onDelete, onRename, onSetGrade }: {
   return (
     <div className="flex items-center gap-2 bg-slate-50 rounded-xl px-3 py-2">
       <button
-        onClick={() => onSetGrade(member.grade === "elementary" ? "other" : "elementary")}
+        onClick={() => { playClick(); onSetGrade(member.grade === "elementary" ? "other" : "elementary"); }}
         className={`shrink-0 text-xs font-bold px-1.5 py-0.5 rounded border transition ${
           member.grade === "elementary"
             ? "bg-orange-100 text-orange-700 border-orange-300"
@@ -613,7 +723,7 @@ function MemberRow({ member, onDelete, onRename, onSetGrade }: {
       <span className="flex-1 text-sm font-medium truncate cursor-pointer" onClick={() => setEditing(true)}>
         {member.name}
       </span>
-      <button onClick={() => setEditing(true)} className="shrink-0 text-xs text-slate-400 underline px-1">編集</button>
+      <button onClick={() => { playClick(); setEditing(true); }} className="shrink-0 text-xs text-slate-400 underline px-1">編集</button>
       <button
         onClick={() => { if (confirm(`「${member.name}」を削除しますか？`)) onDelete(); }}
         className="shrink-0 text-xs text-rose-500 px-1">削除</button>
@@ -637,11 +747,11 @@ function ManualFixList({ members, numTeams, manualFixed, onSet }: {
             {m.grade === "elementary" && <GradeBadge grade="elementary" mini />}
             <span className="flex-1 text-sm font-medium truncate">{m.name}</span>
             <select value={valid ? String(fixed) : "auto"}
-              onChange={(e) => { const v = e.target.value; onSet(m.id, v === "auto" ? null : Number(v)); }}
+              onChange={(e) => { playClick(); const v = e.target.value; onSet(m.id, v === "auto" ? null : Number(v)); }}
               className="px-2 py-1.5 rounded-lg border-2 border-slate-200 bg-white text-sm focus:border-sky-500 outline-none">
               <option value="auto">自動</option>
               {Array.from({ length: numTeams }, (_, i) => i + 1).map((t) => (
-                <option key={t} value={t}>チーム {t}</option>
+                <option key={t} value={t}>チーム {teamLetter(t)}</option>
               ))}
             </select>
           </div>
@@ -673,6 +783,8 @@ function RevealScreen({
   onReshuffle: () => void;
   onBack: () => void;
 }) {
+  const [drumRolling, setDrumRolling] = useState(false);
+
   const total = selectedMembers.length;
   const done = revealedIds.size;
   const allDone = done >= total;
@@ -688,6 +800,19 @@ function RevealScreen({
     });
     return map;
   }, [selectedMembers, memberTeam]);
+
+  function handleRevealAll() {
+    setDrumRolling(true);
+    playDrumRoll(() => {
+      onRevealAll();
+      setDrumRolling(false);
+    });
+  }
+
+  // ドラムロール中はオーバーレイ表示
+  if (drumRolling) {
+    return <DrumRollOverlay />;
+  }
 
   if (lastReveal) {
     const member = memberById.get(lastReveal.memberId);
@@ -728,7 +853,7 @@ function RevealScreen({
                     <span className="absolute top-1.5 left-2"><GradeBadge grade="elementary" mini /></span>
                   )}
                   {revealed && team !== undefined && (
-                    <span className="absolute top-1.5 right-2 text-xs bg-white/30 rounded px-1.5">{team}</span>
+                    <span className="absolute top-1.5 right-2 text-xs bg-white/30 rounded px-1.5">{teamLetter(team)}</span>
                   )}
                 </button>
               );
@@ -749,9 +874,9 @@ function RevealScreen({
       <div className="fixed bottom-0 inset-x-0 p-4 bg-gradient-to-t from-slate-50 via-slate-50 to-transparent">
         <div className="max-w-md mx-auto space-y-2">
           {!allDone && (
-            <button onClick={onRevealAll}
+            <button onClick={handleRevealAll}
               className="w-full py-3 rounded-2xl bg-amber-500 text-white font-bold shadow active:bg-amber-600">
-              ⚡ 全員を一括でチーム確定
+              🥁 全員を一括でチーム確定
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">
@@ -770,6 +895,47 @@ function RevealScreen({
   );
 }
 
+/* ---------- DrumRollOverlay ---------- */
+function DrumRollOverlay() {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setFrame((f) => f + 1), 120);
+    return () => clearInterval(t);
+  }, []);
+  const icons = ["🥁", "🎶", "🥁", "🎵", "🥁", "✨"];
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900">
+      <div className="text-8xl" style={{ animation: "drumBounce 0.24s ease-in-out infinite alternate" }}>
+        {icons[frame % icons.length]}
+      </div>
+      <div className="mt-6 text-white text-2xl font-black tracking-widest">ドラムロール中…</div>
+      <div className="mt-5 flex gap-2">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="w-3 h-3 rounded-full bg-amber-400"
+            style={{
+              animation: `dotBounce 0.6s ease-in-out infinite alternate`,
+              animationDelay: `${i * 0.12}s`,
+            }}
+          />
+        ))}
+      </div>
+      <style jsx>{`
+        @keyframes drumBounce {
+          from { transform: scale(1) rotate(-5deg); }
+          to   { transform: scale(1.15) rotate(5deg); }
+        }
+        @keyframes dotBounce {
+          from { transform: translateY(0); opacity: 0.4; }
+          to   { transform: translateY(-10px); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/* ---------- RevealOverlay ---------- */
 function RevealOverlay({ memberName, grade, teamNumber, onDismiss }: {
   memberName: string; grade?: Grade; teamNumber: number; onDismiss: () => void;
 }) {
@@ -782,7 +948,7 @@ function RevealOverlay({ memberName, grade, teamNumber, onDismiss }: {
       </div>
       <div className={`reveal-pop w-52 h-52 rounded-full flex flex-col items-center justify-center text-white shadow-2xl ${teamColor(teamNumber)}`}>
         <div className="text-sm opacity-90 tracking-wide">YOUR TEAM</div>
-        <div className="text-8xl font-black leading-none">{teamNumber}</div>
+        <div className="text-8xl font-black leading-none">{teamLetter(teamNumber)}</div>
       </div>
       <div className={`mt-5 text-2xl font-bold ${teamTextColor(teamNumber)}`}>{teamName(teamNumber)}</div>
       <div className="mt-10 text-sm text-slate-400">タップして次の人へ →</div>
@@ -802,7 +968,7 @@ function TeamCard({ teamNumber, members }: { teamNumber: number; members: Member
   return (
     <div className="bg-white rounded-2xl shadow-sm p-3 flex items-start gap-3">
       <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg shrink-0 ${teamColor(teamNumber)}`}>
-        {teamNumber}
+        {teamLetter(teamNumber)}
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-xs text-slate-500 mb-0.5">{teamName(teamNumber)}</div>
@@ -859,7 +1025,7 @@ function MatchesScreen({ assignment, memberById, numTeams, courtCount, refereeMo
             const ms = getMembers(t);
             return (
               <div key={t} className="flex items-start gap-2">
-                <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-sm shrink-0 ${teamColor(t)}`}>{t}</span>
+                <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-sm shrink-0 ${teamColor(t)}`}>{teamLetter(t)}</span>
                 <div className="flex flex-wrap gap-x-2 gap-y-0.5 pt-0.5">
                   {ms.map((m) => (
                     <span key={m.id} className="flex items-center gap-0.5 text-sm text-slate-700 font-medium">
@@ -889,7 +1055,7 @@ function MatchesScreen({ assignment, memberById, numTeams, courtCount, refereeMo
               {s.refereeOrRest !== null && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs text-slate-500">{restLabel}:</span>
-                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-sm ${teamColor(s.refereeOrRest)}`}>{s.refereeOrRest}</span>
+                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-sm ${teamColor(s.refereeOrRest)}`}>{teamLetter(s.refereeOrRest)}</span>
                   <span className="text-xs text-slate-500 truncate max-w-[100px]">
                     {getMembers(s.refereeOrRest).map((m) => m.name).join("/")}
                   </span>
@@ -901,7 +1067,9 @@ function MatchesScreen({ assignment, memberById, numTeams, courtCount, refereeMo
               : <div className="space-y-2">
                   {s.matches.map((m, idx) => (
                     <div key={idx} className="bg-slate-50 rounded-xl p-3">
-                      <div className="text-xs font-bold text-slate-500 mb-2">{m.courtName}</div>
+                      {m.courtName && (
+                        <div className="text-xs font-bold text-slate-500 mb-2">{m.courtName}</div>
+                      )}
                       <div className="flex items-start gap-2">
                         <TeamPill teamNumber={m.teamA} members={getMembers(m.teamA)} />
                         <span className="text-slate-400 text-xs font-bold pt-3 shrink-0">VS</span>
@@ -934,7 +1102,7 @@ function MatchesScreen({ assignment, memberById, numTeams, courtCount, refereeMo
 function TeamPill({ teamNumber, members }: { teamNumber: number; members: Member[] }) {
   return (
     <div className="flex-1 flex items-start gap-2 min-w-0">
-      <span className={`w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold shrink-0 ${teamColor(teamNumber)}`}>{teamNumber}</span>
+      <span className={`w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold shrink-0 ${teamColor(teamNumber)}`}>{teamLetter(teamNumber)}</span>
       <div className="min-w-0 flex flex-wrap gap-x-1.5 gap-y-0.5 pt-1">
         {members.map((m) => (
           <span key={m.id} className="flex items-center gap-0.5 text-xs text-slate-700 font-medium">

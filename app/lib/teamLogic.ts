@@ -36,7 +36,7 @@ export function calcTeamSizesFromCount(
 export type CourtCount = 1 | 2 | 3;
 
 export const COURT_NAMES: Record<CourtCount, string[]> = {
-  1: ["中央"],
+  1: [""],  // 1コートは名称表示なし
   2: ["倉庫側", "ステージ側"],
   3: ["倉庫側", "中央", "ステージ側"],
 };
@@ -273,8 +273,14 @@ export function distributeToSessions(
 
 // ---------- 表示用ヘルパー ----------
 
+/** チーム番号をアルファベットに変換 (1→A, 2→B, ...) */
+export function teamLetter(num: number): string {
+  if (num >= 1 && num <= 26) return String.fromCharCode(64 + num);
+  return `T${num}`;
+}
+
 export function teamName(num: number): string {
-  return `チーム${num}`;
+  return `チーム${teamLetter(num)}`;
 }
 
 const TEAM_COLORS = [
