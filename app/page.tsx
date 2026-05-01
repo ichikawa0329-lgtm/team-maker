@@ -87,46 +87,107 @@ function playDrumRoll(onComplete: () => void) {
   const ctx = getAudioCtx();
   if (!ctx) { setTimeout(onComplete, 100); return; }
 
-  const duration = 2.6;
-  let t = ctx.currentTime;
-  let interval = 0.18;
-  const endTime = t + duration;
+  const rollDuration = 3.2;
+  const startTime = ctx.currentTime;
+  const endTime = startTime + rollDuration;
 
+  // --- スネアドラムロール（クレッシェンド）---
+  let t = startTime;
+  let interval = 0.20;
   while (t < endTime) {
-    const bufSize = Math.floor(ctx.sampleRate * 0.07);
+    const bufSize = Math.floor(ctx.sampleRate * 0.075);
     const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
-
     const src = ctx.createBufferSource();
     src.buffer = buf;
 
-    const filter = ctx.createBiquadFilter();
-    filter.type = "bandpass";
-    filter.frequency.value = 1800;
-    filter.Q.value = 0.6;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = 2800;
+    bp.Q.value = 0.8;
+    const hp = ctx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = 1000;
 
     const g = ctx.createGain();
-    const progress = 1 - (endTime - t) / duration;
-    g.gain.setValueAtTime(0.18 + progress * 0.28, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+    const progress = (t - startTime) / rollDuration;
+    g.gain.setValueAtTime(0.10 + progress * 0.55, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.065);
 
-    src.connect(filter);
-    filter.connect(g);
-    g.connect(ctx.destination);
-    src.start(t);
-    src.stop(t + 0.07);
+    src.connect(bp); bp.connect(hp); hp.connect(g); g.connect(ctx.destination);
+    src.start(t); src.stop(t + 0.08);
 
     t += interval;
-    interval = Math.max(0.032, interval * 0.89);
+    interval = Math.max(0.026, interval * 0.875);
   }
 
-  // ドラムロール後にファンファーレ
-  setTimeout(() => {
-    const ctx2 = getAudioCtx();
-    if (ctx2) playFanfare(ctx2);
-    setTimeout(onComplete, 600);
-  }, duration * 1000);
+  // --- バスドラム（締め・重厚感）---
+  [endTime - 0.55, endTime - 0.25, endTime + 0.02].forEach((bt) => {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(90, bt);
+    osc.frequency.exponentialRampToValueAtTime(35, bt + 0.18);
+    osc.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(1.0, bt);
+    g.gain.exponentialRampToValueAtTime(0.001, bt + 0.32);
+    osc.start(bt); osc.stop(bt + 0.35);
+  });
+
+  // --- シンバルクラッシュ ---
+  const cymbalTime = endTime + 0.04;
+  const cBufSize = Math.floor(ctx.sampleRate * 1.2);
+  const cBuf = ctx.createBuffer(1, cBufSize, ctx.sampleRate);
+  const cData = cBuf.getChannelData(0);
+  for (let i = 0; i < cBufSize; i++) cData[i] = Math.random() * 2 - 1;
+  const cSrc = ctx.createBufferSource();
+  cSrc.buffer = cBuf;
+  const cHp = ctx.createBiquadFilter();
+  cHp.type = "highpass";
+  cHp.frequency.value = 5000;
+  const cG = ctx.createGain();
+  cG.gain.setValueAtTime(0.55, cymbalTime);
+  cG.gain.exponentialRampToValueAtTime(0.001, cymbalTime + 1.1);
+  cSrc.connect(cHp); cHp.connect(cG); cG.connect(ctx.destination);
+  cSrc.start(cymbalTime); cSrc.stop(cymbalTime + 1.2);
+
+  // --- 吹奏楽ファンファーレ（サックス・トランペット風）---
+  const fanStart = endTime + 0.08;
+  // Bb長調: Bb3-D4-F4-Bb4 で荘厳に
+  const brassChord = [
+    { freq: 233.08, delay: 0.00, dur: 1.6 }, // Bb3
+    { freq: 293.66, delay: 0.04, dur: 1.55 }, // D4
+    { freq: 349.23, delay: 0.08, dur: 1.5 },  // F4
+    { freq: 466.16, delay: 0.12, dur: 1.45 }, // Bb4
+    { freq: 587.33, delay: 0.16, dur: 1.35 }, // D5
+  ];
+  brassChord.forEach(({ freq, delay, dur }) => {
+    // サブオシレータ（ユニゾン+5セント）で厚みを出す
+    [0, 1.03].forEach((detune) => {
+      const osc = ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.value = freq * detune || freq;
+
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = freq * 6;
+      lp.Q.value = 1.2;
+
+      const g = ctx.createGain();
+      const st = fanStart + delay;
+      g.gain.setValueAtTime(0, st);
+      g.gain.linearRampToValueAtTime(0.22, st + 0.06); // アタック
+      g.gain.setValueAtTime(0.20, st + 0.3);           // サステイン
+      g.gain.exponentialRampToValueAtTime(0.001, st + dur);
+
+      osc.connect(lp); lp.connect(g); g.connect(ctx.destination);
+      osc.start(st); osc.stop(st + dur + 0.05);
+    });
+  });
+
+  const total = rollDuration + 1.8;
+  setTimeout(onComplete, total * 1000);
 }
 
 // ---------- メインコンポーネント ----------
@@ -369,12 +430,6 @@ function SetupScreen(props: {
     onSetManualTeam, onClearManual, onStart,
   } = props;
 
-  // あいうえお順にソート
-  const sortedMembers = useMemo(
-    () => [...members].sort((a, b) => a.name.localeCompare(b.name, "ja")),
-    [members],
-  );
-
   const numParticipants = selectedIds.size;
   const numTeams = teamSizes.length;
   const baseSize = format !== "teamcount" ? FORMAT_BASE_SIZE[format] : null;
@@ -476,7 +531,7 @@ function SetupScreen(props: {
         defaultOpen={members.length === 0}
       >
         <MemberRegistry
-          members={sortedMembers}
+          members={members}
           onAdd={onAddMember}
           onBulkAdd={onBulkAdd}
           onDelete={onDeleteMember}
@@ -506,7 +561,7 @@ function SetupScreen(props: {
               <button onClick={() => { playClick(); onDeselectAll(); }} className="flex-1 py-2 rounded-lg bg-slate-100 text-xs font-medium text-slate-600 active:bg-slate-200">全解除</button>
             </div>
             <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto">
-              {sortedMembers.map((m) => {
+              {members.map((m) => {
                 const checked = selectedIds.has(m.id);
                 return (
                   <button
@@ -576,7 +631,7 @@ function SetupScreen(props: {
           defaultOpen={false}
         >
           <ManualFixList
-            members={sortedMembers.filter((m) => selectedIds.has(m.id))}
+            members={members.filter((m) => selectedIds.has(m.id))}
             numTeams={numTeams}
             manualFixed={manualFixed}
             onSet={onSetManualTeam}
