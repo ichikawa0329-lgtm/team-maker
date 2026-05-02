@@ -26,18 +26,27 @@ import { loadMembers, newMemberId, saveMembers } from "./lib/storage";
 type Phase = "setup" | "reveal" | "matches";
 
 // ---------- 効果音ユーティリティ ----------
+// モバイルでの遅延対策：起動時にプリロードしておく
+let _janAudio: HTMLAudioElement | null = null;
+let _jajaanAudio: HTMLAudioElement | null = null;
 
-function playSound(path: string) {
-  try {
-    const audio = new Audio(path);
-    audio.play().catch(() => {});
-  } catch {}
+function ensureAudio() {
+  if (typeof window === "undefined") return;
+  if (!_janAudio)    { _janAudio    = new Audio("/sounds/jan.mp3");    _janAudio.load(); }
+  if (!_jajaanAudio) { _jajaanAudio = new Audio("/sounds/jajaan.mp3"); _jajaanAudio.load(); }
 }
 
-function playClick()      { playSound("/sounds/pa.mp3"); }
-function playRevealPop()  { playSound("/sounds/pa.mp3"); }
-function playJan()        { playSound("/sounds/jan.mp3"); }
-function playJajaan()     { playSound("/sounds/jajaan.mp3"); }
+function playClick()     {} // ボタンタップ音なし
+function playRevealPop() {} // タップ音なし
+
+function playJan() {
+  ensureAudio();
+  if (_janAudio)    { _janAudio.currentTime    = 0; _janAudio.play().catch(() => {}); }
+}
+function playJajaan() {
+  ensureAudio();
+  if (_jajaanAudio) { _jajaanAudio.currentTime = 0; _jajaanAudio.play().catch(() => {}); }
+}
 
 // ---------- メインコンポーネント ----------
 
@@ -57,9 +66,12 @@ export default function Home() {
   const [assignment, setAssignment] = useState<TeamAssignment>(new Map());
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
   const [lastReveal, setLastReveal] = useState<{ memberId: string; teamNumber: number } | null>(null);
+  const [flashColor, setFlashColor] = useState<string | null>(null); // 画面フラッシュ演出
 
   useEffect(() => { setMembers(loadMembers()); }, []);
   useEffect(() => { saveMembers(members); }, [members]);
+  // 音声プリロード（初回マウント時）
+  useEffect(() => { ensureAudio(); }, []);
 
   // ---------- 派生値 ----------
   const selectedMembers = useMemo(
@@ -174,8 +186,12 @@ export default function Home() {
     setLastReveal(null);
   }
 
-  function gotoMatches() { playJajaan(); setPhase("matches"); }
-  function backToSetup() { playClick(); setPhase("setup"); }
+  function gotoMatches() {
+    playJajaan();
+    setFlashColor("bg-emerald-400");
+    setTimeout(() => { setFlashColor(null); setPhase("matches"); }, 480);
+  }
+  function backToSetup() { setPhase("setup"); }
 
   // ---------- 描画 ----------
   if (phase === "setup") {
@@ -211,19 +227,31 @@ export default function Home() {
 
   if (phase === "reveal") {
     return (
-      <RevealScreen
-        selectedMembers={selectedMembers}
-        memberTeam={memberTeam}
-        memberById={memberById}
-        revealedIds={revealedIds}
-        lastReveal={lastReveal}
-        onReveal={handleReveal}
-        onRevealAll={revealAll}
-        onDismissReveal={dismissReveal}
-        onGotoMatches={gotoMatches}
-        onReshuffle={reshuffleAndReveal}
-        onBack={backToSetup}
-      />
+      <>
+        {flashColor && (
+          <div className={`fixed inset-0 z-[100] pointer-events-none ${flashColor}`}
+            style={{ animation: "screenFlash 0.48s ease-out forwards" }} />
+        )}
+        <RevealScreen
+          selectedMembers={selectedMembers}
+          memberTeam={memberTeam}
+          memberById={memberById}
+          revealedIds={revealedIds}
+          lastReveal={lastReveal}
+          onReveal={handleReveal}
+          onRevealAll={revealAll}
+          onDismissReveal={dismissReveal}
+          onGotoMatches={gotoMatches}
+          onReshuffle={reshuffleAndReveal}
+          onBack={backToSetup}
+        />
+        <style jsx global>{`
+          @keyframes screenFlash {
+            0%   { opacity: 0.75; }
+            100% { opacity: 0; }
+          }
+        `}</style>
+      </>
     );
   }
 
@@ -703,9 +731,27 @@ function RevealScreen({
     return map;
   }, [selectedMembers, memberTeam]);
 
+  const [janFlash, setJanFlash] = useState(false);
+
   function handleRevealAll() {
     playJan();
-    onRevealAll();
+    setJanFlash(true);
+    setTimeout(() => { setJanFlash(false); onRevealAll(); }, 380);
+  }
+
+  if (janFlash) {
+    return (
+      <div className="fixed inset-0 z-50 bg-amber-400 flex items-center justify-center"
+        style={{ animation: "screenFlash 0.38s ease-out forwards" }}>
+        <div className="text-6xl font-black text-white drop-shadow-lg">🎉</div>
+        <style jsx>{`
+          @keyframes screenFlash {
+            0%   { opacity: 0.9; }
+            100% { opacity: 0; }
+          }
+        `}</style>
+      </div>
+    );
   }
 
   if (lastReveal) {
