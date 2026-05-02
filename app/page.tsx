@@ -27,168 +27,17 @@ type Phase = "setup" | "reveal" | "matches";
 
 // ---------- 効果音ユーティリティ ----------
 
-function getAudioCtx(): AudioContext | null {
+function playSound(path: string) {
   try {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new Ctx();
-    if (ctx.state === "suspended") ctx.resume();
-    return ctx;
-  } catch { return null; }
+    const audio = new Audio(path);
+    audio.play().catch(() => {});
+  } catch {}
 }
 
-function playClick() {
-  const ctx = getAudioCtx();
-  if (!ctx) return;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = "sine";
-  osc.frequency.value = 700;
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  gain.gain.setValueAtTime(0.18, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + 0.12);
-}
-
-function playRevealPop() {
-  const ctx = getAudioCtx();
-  if (!ctx) return;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = "sine";
-  osc.frequency.setValueAtTime(300, ctx.currentTime);
-  osc.frequency.exponentialRampToValueAtTime(700, ctx.currentTime + 0.08);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  gain.gain.setValueAtTime(0.35, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + 0.22);
-}
-
-function playFanfare(ctx: AudioContext) {
-  [[523, 0], [659, 0.09], [784, 0.18], [1047, 0.27]].forEach(([freq, delay]) => {
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = freq;
-    osc.connect(g);
-    g.connect(ctx.destination);
-    const st = ctx.currentTime + delay;
-    g.gain.setValueAtTime(0.32, st);
-    g.gain.exponentialRampToValueAtTime(0.001, st + 0.38);
-    osc.start(st);
-    osc.stop(st + 0.38);
-  });
-}
-
-function playDrumRoll(onComplete: () => void) {
-  const ctx = getAudioCtx();
-  if (!ctx) { setTimeout(onComplete, 100); return; }
-
-  const rollDuration = 3.2;
-  const startTime = ctx.currentTime;
-  const endTime = startTime + rollDuration;
-
-  // --- スネアドラムロール（クレッシェンド）---
-  let t = startTime;
-  let interval = 0.20;
-  while (t < endTime) {
-    const bufSize = Math.floor(ctx.sampleRate * 0.075);
-    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < bufSize; i++) d[i] = Math.random() * 2 - 1;
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-
-    const bp = ctx.createBiquadFilter();
-    bp.type = "bandpass";
-    bp.frequency.value = 2800;
-    bp.Q.value = 0.8;
-    const hp = ctx.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 1000;
-
-    const g = ctx.createGain();
-    const progress = (t - startTime) / rollDuration;
-    g.gain.setValueAtTime(0.10 + progress * 0.55, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.065);
-
-    src.connect(bp); bp.connect(hp); hp.connect(g); g.connect(ctx.destination);
-    src.start(t); src.stop(t + 0.08);
-
-    t += interval;
-    interval = Math.max(0.026, interval * 0.875);
-  }
-
-  // --- バスドラム（締め・重厚感）---
-  [endTime - 0.55, endTime - 0.25, endTime + 0.02].forEach((bt) => {
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(90, bt);
-    osc.frequency.exponentialRampToValueAtTime(35, bt + 0.18);
-    osc.connect(g); g.connect(ctx.destination);
-    g.gain.setValueAtTime(1.0, bt);
-    g.gain.exponentialRampToValueAtTime(0.001, bt + 0.32);
-    osc.start(bt); osc.stop(bt + 0.35);
-  });
-
-  // --- シンバルクラッシュ ---
-  const cymbalTime = endTime + 0.04;
-  const cBufSize = Math.floor(ctx.sampleRate * 1.2);
-  const cBuf = ctx.createBuffer(1, cBufSize, ctx.sampleRate);
-  const cData = cBuf.getChannelData(0);
-  for (let i = 0; i < cBufSize; i++) cData[i] = Math.random() * 2 - 1;
-  const cSrc = ctx.createBufferSource();
-  cSrc.buffer = cBuf;
-  const cHp = ctx.createBiquadFilter();
-  cHp.type = "highpass";
-  cHp.frequency.value = 5000;
-  const cG = ctx.createGain();
-  cG.gain.setValueAtTime(0.55, cymbalTime);
-  cG.gain.exponentialRampToValueAtTime(0.001, cymbalTime + 1.1);
-  cSrc.connect(cHp); cHp.connect(cG); cG.connect(ctx.destination);
-  cSrc.start(cymbalTime); cSrc.stop(cymbalTime + 1.2);
-
-  // --- 吹奏楽ファンファーレ（サックス・トランペット風）---
-  const fanStart = endTime + 0.08;
-  // Bb長調: Bb3-D4-F4-Bb4 で荘厳に
-  const brassChord = [
-    { freq: 233.08, delay: 0.00, dur: 1.6 }, // Bb3
-    { freq: 293.66, delay: 0.04, dur: 1.55 }, // D4
-    { freq: 349.23, delay: 0.08, dur: 1.5 },  // F4
-    { freq: 466.16, delay: 0.12, dur: 1.45 }, // Bb4
-    { freq: 587.33, delay: 0.16, dur: 1.35 }, // D5
-  ];
-  brassChord.forEach(({ freq, delay, dur }) => {
-    // サブオシレータ（ユニゾン+5セント）で厚みを出す
-    [0, 1.03].forEach((detune) => {
-      const osc = ctx.createOscillator();
-      osc.type = "sawtooth";
-      osc.frequency.value = freq * detune || freq;
-
-      const lp = ctx.createBiquadFilter();
-      lp.type = "lowpass";
-      lp.frequency.value = freq * 6;
-      lp.Q.value = 1.2;
-
-      const g = ctx.createGain();
-      const st = fanStart + delay;
-      g.gain.setValueAtTime(0, st);
-      g.gain.linearRampToValueAtTime(0.22, st + 0.06); // アタック
-      g.gain.setValueAtTime(0.20, st + 0.3);           // サステイン
-      g.gain.exponentialRampToValueAtTime(0.001, st + dur);
-
-      osc.connect(lp); lp.connect(g); g.connect(ctx.destination);
-      osc.start(st); osc.stop(st + dur + 0.05);
-    });
-  });
-
-  const total = rollDuration + 1.8;
-  setTimeout(onComplete, total * 1000);
-}
+function playClick()      { playSound("/sounds/pa.mp3"); }
+function playRevealPop()  { playSound("/sounds/pa.mp3"); }
+function playJan()        { playSound("/sounds/jan.mp3"); }
+function playJajaan()     { playSound("/sounds/jajaan.mp3"); }
 
 // ---------- メインコンポーネント ----------
 
@@ -325,7 +174,7 @@ export default function Home() {
     setLastReveal(null);
   }
 
-  function gotoMatches() { playClick(); setPhase("matches"); }
+  function gotoMatches() { playJajaan(); setPhase("matches"); }
   function backToSetup() { playClick(); setPhase("setup"); }
 
   // ---------- 描画 ----------
@@ -838,8 +687,6 @@ function RevealScreen({
   onReshuffle: () => void;
   onBack: () => void;
 }) {
-  const [drumRolling, setDrumRolling] = useState(false);
-
   const total = selectedMembers.length;
   const done = revealedIds.size;
   const allDone = done >= total;
@@ -857,16 +704,8 @@ function RevealScreen({
   }, [selectedMembers, memberTeam]);
 
   function handleRevealAll() {
-    setDrumRolling(true);
-    playDrumRoll(() => {
-      onRevealAll();
-      setDrumRolling(false);
-    });
-  }
-
-  // ドラムロール中はオーバーレイ表示
-  if (drumRolling) {
-    return <DrumRollOverlay />;
+    playJan();
+    onRevealAll();
   }
 
   if (lastReveal) {
@@ -931,7 +770,7 @@ function RevealScreen({
           {!allDone && (
             <button onClick={handleRevealAll}
               className="w-full py-3 rounded-2xl bg-amber-500 text-white font-bold shadow active:bg-amber-600">
-              🥁 全員を一括でチーム確定
+              ⚡ 全員を一括でチーム確定
             </button>
           )}
           <div className="grid grid-cols-2 gap-2">
@@ -947,46 +786,6 @@ function RevealScreen({
         </div>
       </div>
     </main>
-  );
-}
-
-/* ---------- DrumRollOverlay ---------- */
-function DrumRollOverlay() {
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setFrame((f) => f + 1), 120);
-    return () => clearInterval(t);
-  }, []);
-  const icons = ["🥁", "🎶", "🥁", "🎵", "🥁", "✨"];
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900">
-      <div className="text-8xl" style={{ animation: "drumBounce 0.24s ease-in-out infinite alternate" }}>
-        {icons[frame % icons.length]}
-      </div>
-      <div className="mt-6 text-white text-2xl font-black tracking-widest">ドラムロール中…</div>
-      <div className="mt-5 flex gap-2">
-        {[0, 1, 2, 3, 4].map((i) => (
-          <div
-            key={i}
-            className="w-3 h-3 rounded-full bg-amber-400"
-            style={{
-              animation: `dotBounce 0.6s ease-in-out infinite alternate`,
-              animationDelay: `${i * 0.12}s`,
-            }}
-          />
-        ))}
-      </div>
-      <style jsx>{`
-        @keyframes drumBounce {
-          from { transform: scale(1) rotate(-5deg); }
-          to   { transform: scale(1.15) rotate(5deg); }
-        }
-        @keyframes dotBounce {
-          from { transform: translateY(0); opacity: 0.4; }
-          to   { transform: translateY(-10px); opacity: 1; }
-        }
-      `}</style>
-    </div>
   );
 }
 
