@@ -26,27 +26,39 @@ import { loadMembers, newMemberId, saveMembers } from "./lib/storage";
 type Phase = "setup" | "reveal" | "matches";
 
 // ---------- 効果音ユーティリティ ----------
-// モバイルでの遅延対策：起動時にプリロードしておく
-let _janAudio: HTMLAudioElement | null = null;
-let _jajaanAudio: HTMLAudioElement | null = null;
+const SOUNDS: Record<string, HTMLAudioElement | null> = {
+  cursor: null, select: null, start: null,
+  oh: null, stadium: null, cancel: null,
+};
 
 function ensureAudio() {
   if (typeof window === "undefined") return;
-  if (!_janAudio)    { _janAudio    = new Audio("/sounds/jan.mp3");    _janAudio.load(); }
-  if (!_jajaanAudio) { _jajaanAudio = new Audio("/sounds/jajaan.mp3"); _jajaanAudio.load(); }
+  const map: Record<string, string> = {
+    cursor:  "/sounds/cursor.mp3",
+    select:  "/sounds/select.mp3",
+    start:   "/sounds/start.mp3",
+    oh:      "/sounds/oh.mp3",
+    stadium: "/sounds/stadium.mp3",
+    cancel:  "/sounds/cancel.mp3",
+  };
+  for (const [key, src] of Object.entries(map)) {
+    if (!SOUNDS[key]) { SOUNDS[key] = new Audio(src); SOUNDS[key]!.load(); }
+  }
 }
 
-function playClick()     {} // ボタンタップ音なし
-function playRevealPop() {} // タップ音なし
+function playS(key: string) {
+  ensureAudio();
+  const a = SOUNDS[key];
+  if (a) { a.currentTime = 0; a.play().catch(() => {}); }
+}
 
-function playJan() {
-  ensureAudio();
-  if (_janAudio)    { _janAudio.currentTime    = 0; _janAudio.play().catch(() => {}); }
-}
-function playJajaan() {
-  ensureAudio();
-  if (_jajaanAudio) { _jajaanAudio.currentTime = 0; _jajaanAudio.play().catch(() => {}); }
-}
+function playClick()     { playS("cursor"); }   // ボタンタップ
+function playRevealPop() { playS("cursor"); }   // 名前タップ
+function playSelect()    { playS("select"); }   // 参加者チェック
+function playStart()     { playS("start"); }    // ランダム配置開始
+function playOh()        { playS("oh"); }       // 一括確定
+function playStadium()   { playS("stadium"); }  // 対戦表を作成
+function playCancel()    { playS("cancel"); }   // ←設定（戻る）
 
 // ---------- メインコンポーネント ----------
 
@@ -157,7 +169,7 @@ export default function Home() {
 
   function startReveal() {
     if (numTeams < 2) return;
-    playClick();
+    playStart();
     setAssignment(buildAssignment());
     setRevealedIds(new Set());
     setLastReveal(null);
@@ -187,11 +199,11 @@ export default function Home() {
   }
 
   function gotoMatches() {
-    playJajaan();
-    setFlashColor("bg-emerald-400");
-    setTimeout(() => { setFlashColor(null); setPhase("matches"); }, 480);
+    playStadium();
+    setFlashColor("bg-black");
+    setTimeout(() => { setFlashColor(null); setPhase("matches"); }, 500);
   }
-  function backToSetup() { setPhase("setup"); }
+  function backToSetup() { playCancel(); setPhase("setup"); }
 
   // ---------- 描画 ----------
   if (phase === "setup") {
@@ -247,7 +259,8 @@ export default function Home() {
         />
         <style jsx global>{`
           @keyframes screenFlash {
-            0%   { opacity: 0.75; }
+            0%   { opacity: 1; }
+            60%  { opacity: 1; }
             100% { opacity: 0; }
           }
         `}</style>
@@ -443,7 +456,7 @@ function SetupScreen(props: {
                 return (
                   <button
                     key={m.id}
-                    onClick={() => { playClick(); onToggleSelect(m.id); }}
+                    onClick={() => { playSelect(); onToggleSelect(m.id); }}
                     className={`flex items-center gap-2 py-2.5 px-3 rounded-xl border-2 text-left transition ${
                       checked ? "border-sky-500 bg-sky-50" : "border-slate-200 bg-white"
                     }`}
@@ -734,19 +747,19 @@ function RevealScreen({
   const [janFlash, setJanFlash] = useState(false);
 
   function handleRevealAll() {
-    playJan();
+    playOh();
     setJanFlash(true);
-    setTimeout(() => { setJanFlash(false); onRevealAll(); }, 380);
+    setTimeout(() => { setJanFlash(false); onRevealAll(); }, 500);
   }
 
   if (janFlash) {
     return (
-      <div className="fixed inset-0 z-50 bg-amber-400 flex items-center justify-center"
-        style={{ animation: "screenFlash 0.38s ease-out forwards" }}>
-        <div className="text-6xl font-black text-white drop-shadow-lg">🎉</div>
+      <div className="fixed inset-0 z-50 bg-black flex items-center justify-center"
+        style={{ animation: "blackFlash 0.5s ease-in-out forwards" }}>
         <style jsx>{`
-          @keyframes screenFlash {
-            0%   { opacity: 0.9; }
+          @keyframes blackFlash {
+            0%   { opacity: 1; }
+            60%  { opacity: 1; }
             100% { opacity: 0; }
           }
         `}</style>
