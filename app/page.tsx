@@ -23,7 +23,7 @@ import {
 } from "./lib/teamLogic";
 import { loadMembers, newMemberId, saveMembers } from "./lib/storage";
 
-type Phase = "setup" | "reveal" | "matches";
+type Phase = "setup" | "members" | "reveal" | "matches";
 
 // ---------- 効果音ユーティリティ ----------
 const SOUNDS: Record<string, HTMLAudioElement | null> = {
@@ -204,8 +204,23 @@ export default function Home() {
     setTimeout(() => { setFlashColor(null); setPhase("matches"); }, 500);
   }
   function backToSetup() { playCancel(); setPhase("setup"); }
+  function gotoMembers() { playClick(); setPhase("members"); }
 
   // ---------- 描画 ----------
+  if (phase === "members") {
+    return (
+      <MembersScreen
+        members={members}
+        onAdd={addMember}
+        onBulkAdd={bulkAddMembers}
+        onDelete={deleteMember}
+        onRename={renameMember}
+        onSetGrade={setMemberGrade}
+        onBack={backToSetup}
+      />
+    );
+  }
+
   if (phase === "setup") {
     return (
       <SetupScreen
@@ -218,11 +233,6 @@ export default function Home() {
         manualFixed={manualFixed}
         teamSizes={teamSizes}
         elementaryCount={elementaryCount}
-        onAddMember={addMember}
-        onBulkAdd={bulkAddMembers}
-        onDeleteMember={deleteMember}
-        onRenameMember={renameMember}
-        onSetMemberGrade={setMemberGrade}
         onToggleSelect={toggleSelect}
         onSelectAll={selectAll}
         onDeselectAll={deselectAll}
@@ -232,6 +242,7 @@ export default function Home() {
         onSetReferee={setRefereeMode}
         onSetManualTeam={setManualTeam}
         onClearManual={clearAllManual}
+        onGotoMembers={gotoMembers}
         onStart={startReveal}
       />
     );
@@ -295,11 +306,6 @@ function SetupScreen(props: {
   manualFixed: Map<string, number>;
   teamSizes: number[];
   elementaryCount: number;
-  onAddMember: (n: string) => void;
-  onBulkAdd: (t: string) => void;
-  onDeleteMember: (id: string) => void;
-  onRenameMember: (id: string, n: string) => void;
-  onSetMemberGrade: (id: string, g: Grade) => void;
   onToggleSelect: (id: string) => void;
   onSelectAll: () => void;
   onDeselectAll: () => void;
@@ -309,15 +315,15 @@ function SetupScreen(props: {
   onSetReferee: (b: boolean) => void;
   onSetManualTeam: (id: string, t: number | null) => void;
   onClearManual: () => void;
+  onGotoMembers: () => void;
   onStart: () => void;
 }) {
   const {
     members, selectedIds, format, customNumTeams, courtCount, refereeMode,
     manualFixed, teamSizes, elementaryCount,
-    onAddMember, onBulkAdd, onDeleteMember, onRenameMember, onSetMemberGrade,
     onToggleSelect, onSelectAll, onDeselectAll,
     onSetFormat, onSetCustomNumTeams, onSetCourtCount, onSetReferee,
-    onSetManualTeam, onClearManual, onStart,
+    onSetManualTeam, onClearManual, onGotoMembers, onStart,
   } = props;
 
   const numParticipants = selectedIds.size;
@@ -413,26 +419,27 @@ function SetupScreen(props: {
         </div>
       </Section>
 
-      {/* ④ メンバー帳 */}
-      <Section
-        title="④ メンバー帳"
-        right={<span className="text-xs text-slate-500">{members.length}名</span>}
-        collapsible
-        defaultOpen={members.length === 0}
+      {/* ④ メンバー登録ボタン */}
+      <button
+        onClick={() => { playClick(); onGotoMembers(); }}
+        className="w-full flex items-center justify-between bg-white rounded-2xl shadow-sm p-4 mb-3 active:bg-slate-50"
       >
-        <MemberRegistry
-          members={members}
-          onAdd={onAddMember}
-          onBulkAdd={onBulkAdd}
-          onDelete={onDeleteMember}
-          onRename={onRenameMember}
-          onSetGrade={onSetMemberGrade}
-        />
-      </Section>
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">📋</span>
+          <div className="text-left">
+            <div className="font-semibold text-slate-800">メンバー登録</div>
+            <div className="text-xs text-slate-500 mt-0.5">メンバーの追加・編集・削除</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold text-sky-600">{members.length}名</span>
+          <span className="text-slate-400 text-sm">›</span>
+        </div>
+      </button>
 
-      {/* ⑤ 今日の参加者 */}
+      {/* ④ 今日の参加者 */}
       <Section
-        title="⑤ 今日の参加者"
+        title="④ 今日の参加者"
         right={
           <span className="text-xs text-slate-500">
             {numParticipants}/{members.length}
@@ -508,10 +515,10 @@ function SetupScreen(props: {
         </section>
       )}
 
-      {/* ⑥ 手動チーム固定 */}
+      {/* ⑤ 手動チーム固定 */}
       {numTeams >= 2 && (
         <Section
-          title="⑥ 手動でチーム固定（任意）"
+          title="⑤ 手動でチーム固定（任意）"
           right={
             manualFixed.size > 0
               ? <button onClick={() => { playClick(); onClearManual(); }} className="text-xs text-sky-600 underline">全解除({manualFixed.size})</button>
@@ -539,6 +546,43 @@ function SetupScreen(props: {
             ランダム配置 → タップ開始
           </button>
         </div>
+      </div>
+    </main>
+  );
+}
+
+/* =====================================================================
+ *  MembersScreen
+ * ==================================================================== */
+
+function MembersScreen({ members, onAdd, onBulkAdd, onDelete, onRename, onSetGrade, onBack }: {
+  members: Member[];
+  onAdd: (name: string) => void;
+  onBulkAdd: (text: string) => void;
+  onDelete: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onSetGrade: (id: string, grade: Grade) => void;
+  onBack: () => void;
+}) {
+  return (
+    <main className="max-w-md mx-auto p-4 pb-10">
+      <header className="py-4 flex items-center gap-3">
+        <button onClick={onBack} className="text-sm text-slate-500 underline">← 戻る</button>
+        <h1 className="text-lg font-bold flex-1 text-center pr-12">メンバー登録</h1>
+      </header>
+      <div className="bg-white rounded-2xl shadow-sm p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold text-slate-700">メンバー帳</h2>
+          <span className="text-xs text-slate-500">{members.length}名</span>
+        </div>
+        <MemberRegistry
+          members={members}
+          onAdd={onAdd}
+          onBulkAdd={onBulkAdd}
+          onDelete={onDelete}
+          onRename={onRename}
+          onSetGrade={onSetGrade}
+        />
       </div>
     </main>
   );
